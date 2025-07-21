@@ -5,16 +5,19 @@
  */
 
 
-import { timeoutPromise, getAllControls } from './utils.js'
+import { timeoutPromise, getAllControls, getAllRanges, getInfoAndRange } from './utils.js'
 import express from 'express'
+import cors from 'cors'
 import UVCControl from 'uvc-control'
 
+console.log('starting server', cors)
 /**
  * state variables
  */
 const app = express()
+app.use(cors())
 const cameras = []
-
+const TOTALLY_UNSUPPORTED = ['OBSBOT Tiny 4K']
 /**
  * Get camera by either name, adress, or vendor ID
  * Cache cameras because making them is expensive.
@@ -24,9 +27,9 @@ const cameras = []
 */
 async function getCameraByIdentifier(identifier) {
     // check cached cameras
-    const existingCam = cameras.findLast(x => {
+    const existingCam = cameras.find(x => {
         const d = x.device
-        if (d.name == identifier) return true
+        if (d.name.includes( identifier)) return true
         if (d.deviceAddress == identifier) return true
         if (d.deviceDescriptor.idVendor == identifier) return true
         return false
@@ -41,14 +44,21 @@ async function getCameraByIdentifier(identifier) {
         throw ('No Cameras found')
     }
     let device = devices.findLast(d => {
-        if (d.name == identifier) return true
+        if (d.name.includes(identifier)) return true
+        if(identifier.includes(d.name)) return true
         if (d.deviceAddress == identifier) return true
         if (d.deviceDescriptor.idVendor == identifier) return true
         return false
     })
     if (!device) {
-        console.warn('device not found. Returning default', identifier)
-        device = devices[0]
+        throw('device not found')
+        // return
+        // device = devices[0]
+    }
+    const isUnsupported = TOTALLY_UNSUPPORTED.find(x => device.name.includes(x))
+    if(isUnsupported){
+        console.warn('device is unsupported', device.name)
+        throw('device is unsupported')
     }
     const vid = device.deviceDescriptor.idVendor
     const pid = device.deviceDescriptor.idProduct
@@ -74,6 +84,32 @@ app.get('/devices', async (req, res) => {
     console.timeEnd('devices')
 })
 
+app.get('/info/:deviceIdentifier', async (req, res) => {
+    let cam
+    try {
+        cam = await getCameraByIdentifier(req.params.deviceIdentifier)
+        const ranges = await getAllRanges(cam)
+        res.send(ranges)
+    } catch (err) {
+        console.error(err)
+        res.status(500).send(err)
+        return
+    }
+})
+
+app.get('/info/:deviceIdentifier/:control', async (req, res) => {
+    let cam
+    try {
+        cam = await getCameraByIdentifier(req.params.deviceIdentifier)
+        const info = await getInfoAndRange(cam, req.params.control)
+        res.send(info)
+    } catch (err) {
+        console.error(err)
+        res.status(500).send(err)
+    }
+})
+
+
 app.get('/controls/:deviceIdentifier', async (req, res) => {
     let cam
     try {
@@ -94,13 +130,9 @@ app.get('/get/:deviceIdentifier/:control', async (req, res) => {
         const retVals = await cam.get(req.params.control)
         res.send(retVals)
     } catch (err) {
+        console.error(err)
         res.status(500).send(err)
     }
-})
-
-app.post('/boo', async (req, res) => {
-    console.log('booooo')
-    res.send("hello")
 })
 
 // TODO make this a POST instead. It doesn't seem to get called with post
@@ -113,6 +145,7 @@ app.get('/set/:deviceIdentifier/:control/:values', async (req, res) => {
         const retVals = await cam.set(req.params.control, values)
         res.send(retVals)
     } catch (err) {
+        console.error(err)
         res.status(500).send(err)
     }
 })
